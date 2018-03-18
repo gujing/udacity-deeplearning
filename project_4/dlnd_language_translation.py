@@ -208,8 +208,8 @@ def process_decoding_input(target_data, target_vocab_to_int, batch_size):
     :param batch_size: Batch Size
     :return: Preprocessed target data
     """
-    _go = tf.fill((batch_size, 1), target_vocab_to_int['<GO>'])
-    process_target_data = tf.concat([_go, tf.slice(target_data,[0,1],[-1,-1])], axis=1)
+    ending = tf.strided_slice(target_data, [0, 0], [batch_size, -1], [1, 1])
+    process_target_data = tf.concat([tf.fill([batch_size, 1], target_vocab_to_int['<GO>']), ending], 1)
     return process_target_data
 
 """
@@ -342,14 +342,12 @@ def decoding_layer(dec_embed_input, dec_embeddings, encoder_state, vocab_size, s
     :param keep_prob: Dropout keep probability
     :return: Tuple of (Training Logits, Inference Logits)
     """
-    cell = tf.contrib.rnn.LSTMCell(rnn_size, initializer=tf.random_uniform_initializer(-0.1, 0.1, seed=2))
-    dec_cells = tf.contrib.rnn.MultiRNNCell([cell] * num_layers)
-    
+    dec_cells = tf.contrib.rnn.MultiRNNCell([tf.contrib.rnn.BasicLSTMCell(rnn_size)] * num_layers)
     with tf.variable_scope('decode') as de_scope:
         output_fn = lambda x: tf.contrib.layers.fully_connected(x, vocab_size, activation_fn=None, scope=de_scope)
+    with tf.variable_scope('decode') as de_scope:        
         train_outputs = decoding_layer_train(encoder_state, dec_cells, dec_embed_input, sequence_length, de_scope, output_fn, keep_prob)
     with tf.variable_scope('decode', reuse=True) as de_scope:
-        output_fn = lambda x: tf.contrib.layers.fully_connected(x, vocab_size, activation_fn=None, scope=de_scope)
         infer_outputs = decoding_layer_infer(encoder_state, dec_cells, dec_embeddings, target_vocab_to_int['<GO>'],
                                             target_vocab_to_int['<EOS>'], sequence_length, vocab_size, de_scope,output_fn,keep_prob)
     return train_outputs, infer_outputs
@@ -391,11 +389,10 @@ def seq2seq_model(input_data, target_data, keep_prob, batch_size, sequence_lengt
     :param target_vocab_to_int: Dictionary to go from the target words to an id
     :return: Tuple of (Training Logits, Inference Logits)
     """
-    input_embed = tf.Variable(tf.random_uniform((source_vocab_size, enc_embedding_size), -1, 1))
-    rnn_input = tf.nn.embedding_lookup(input_embed, input_data)
+    rnn_input = tf.contrib.layers.embed_sequence(input_data, source_vocab_size, enc_embedding_size)
     encode_state = encoding_layer(rnn_input, rnn_size, num_layers, keep_prob)
     dec_input = process_decoding_input(target_data, target_vocab_to_int, batch_size)
-    target_embed = tf.Variable(tf.random_uniform((target_vocab_size, dec_embedding_size), -1, 1))
+    target_embed = tf.Variable(tf.random_uniform([target_vocab_size, dec_embedding_size]))
     dec_emb_input = tf.nn.embedding_lookup(target_embed, dec_input)
     train_out, infer_out = decoding_layer(dec_emb_input, target_embed, encode_state, target_vocab_size, sequence_length, rnn_size,
                                          num_layers, target_vocab_to_int, keep_prob)
@@ -424,12 +421,12 @@ tests.test_seq2seq_model(seq2seq_model)
 # - 将 `learning_rate` 设为训练速率。
 # - 将 `keep_probability` 设为丢弃保留率（Dropout keep probability）。
 
-# In[29]:
+# In[17]:
 
 # Number of Epochs
 epochs = 7
 # Batch Size
-batch_size = 2048
+batch_size = 256
 # RNN Size
 rnn_size = 256
 # Number of Layers
@@ -447,7 +444,7 @@ keep_probability = 0.5
 # 
 # 使用你实现的神经网络构建图表。
 
-# In[30]:
+# In[18]:
 
 """
 DON'T MODIFY ANYTHING IN THIS CELL
@@ -487,7 +484,7 @@ with train_graph.as_default():
 # 
 # 利用预处理的数据训练神经网络。如果很难获得低损失值，请访问我们的论坛，看看其他人是否遇到了相同的问题。
 
-# In[31]:
+# In[19]:
 
 """
 DON'T MODIFY ANYTHING IN THIS CELL
@@ -557,7 +554,7 @@ with tf.Session(graph=train_graph) as sess:
 # 
 # 保存 `batch_size` 和 `save_path` 参数以进行推论（for inference）。
 
-# In[32]:
+# In[20]:
 
 """
 DON'T MODIFY ANYTHING IN THIS CELL
@@ -568,7 +565,7 @@ helper.save_params(save_path)
 
 # # 检查点
 
-# In[33]:
+# In[21]:
 
 """
 DON'T MODIFY ANYTHING IN THIS CELL
@@ -590,7 +587,7 @@ load_path = helper.load_params()
 # - 使用 `vocab_to_int` 将单词转换为 id
 #  - 如果单词不在词汇表中，将其转换为`<UNK>` 单词 id
 
-# In[34]:
+# In[22]:
 
 def sentence_to_seq(sentence, vocab_to_int):
     """
@@ -599,7 +596,7 @@ def sentence_to_seq(sentence, vocab_to_int):
     :param vocab_to_int: Dictionary to go from the words to an id
     :return: List of word ids
     """
-    words = [(vocab_to_int[word] if word in vocab_to_int else vocab_to_int['<UNK>']) for word in sentence.split()]
+    words = [(vocab_to_int[word] if word in vocab_to_int else vocab_to_int['<UNK>']) for word in sentence.lower().split()]
     return words
 
 
@@ -613,7 +610,7 @@ tests.test_sentence_to_seq(sentence_to_seq)
 # 
 # 将 `translate_sentence` 从英语翻译成法语。
 
-# In[35]:
+# In[23]:
 
 translate_sentence = 'he saw a old yellow truck .'
 
@@ -655,8 +652,3 @@ print('  French Words: {}'.format([target_int_to_vocab[i] for i in np.argmax(tra
 # 
 # 提交项目时，确保先运行所有单元，然后再保存记事本。保存记事本文件为 “dlnd_language_translation.ipynb”，再通过菜单中的“文件” ->“下载为”将其另存为 HTML 格式。提交的项目文档中需包含“helper.py”和“problem_unittests.py”文件。
 # 
-
-# In[ ]:
-
-
-
